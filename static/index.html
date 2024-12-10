@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>CAN Frame Monitor</title>
+    <style>
+        table {
+            border-collapse: collapse;
+            width: 100%;
+            margin-top: 20px;
+        }
+        th, td {
+            border: 1px solid #ddd;
+            padding: 8px;
+            text-align: left;
+        }
+        th {
+            background-color: #f2f2f2;
+        }
+        .frame-container {
+            max-height: 400px;
+            overflow-y: auto;
+        }
+    </style>
+</head>
+<body>
+<h1>CAN Frame Monitor</h1>
+<div class="frame-container">
+    <table>
+        <thead>
+        <tr>
+            <th>Zeitstempel</th>
+            <th>ID (hex)</th>
+            <th>Länge</th>
+            <th>Daten (hex)</th>
+        </tr>
+        </thead>
+        <tbody id="frameList">
+        </tbody>
+    </table>
+</div>
+
+<script>
+    const ws = new WebSocket('ws://' + window.location.host + '/ws');
+    const frameList = document.getElementById('frameList');
+
+    ws.onmessage = (event) => {
+        const frame = JSON.parse(event.data);
+        const row = document.createElement('tr');
+
+        const time = new Date().toLocaleTimeString();
+        const id = frame.id.toString(16).toUpperCase().padStart(3, '0');
+        const data = Array.from(frame.data.slice(0, frame.length))
+            .map(b => b.toString(16).padStart(2, '0').toUpperCase())
+            .join(' ');
+
+        row.innerHTML = `
+                <td>${time}</td>
+                <td>${id}</td>
+                <td>${frame.length}</td>
+                <td>${data}</td>
+            `;
+
+        frameList.insertBefore(row, frameList.firstChild);
+    };
+
+    ws.onclose = () => {
+        console.log('Verbindung getrennt');
+    };
+</script>
+</body>
+</html>
