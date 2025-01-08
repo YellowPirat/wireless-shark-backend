@@ -2,7 +2,6 @@ package main
 
 import (
 	"encoding/json"
-	"fmt"
 	"io"
 	"io/ioutil"
 	"net/http"
@@ -21,6 +20,7 @@ const (
 	assignmentsFile = "/var/www/can_assignments.json"
 )
 
+// Variablen
 var (
 	loggerCmd *exec.Cmd
 	mutex     sync.Mutex
@@ -69,6 +69,7 @@ func listConfigFiles(w http.ResponseWriter, r *http.Request) {
     files, err := os.ReadDir("/var/www")
     if err != nil {
         http.Error(w, "Failed to read config files", http.StatusInternalServerError)
+		log.Println("Lesen des config Verzeichnisses fehlgeschlagen")
         return
     }
 
@@ -81,6 +82,7 @@ func listConfigFiles(w http.ResponseWriter, r *http.Request) {
 
     w.Header().Set("Content-Type", "application/json")
     json.NewEncoder(w).Encode(fileNames)
+	log.Println("Lesen des config Verzeichnisses erfolgreich.")
 }
 
 // Logger starten
@@ -90,35 +92,35 @@ func startLogger(w http.ResponseWriter, r *http.Request) {
 
 	if loggerCmd != nil && loggerCmd.Process != nil {
 		http.Error(w, "Logger is already running", http.StatusConflict)
-		fmt.Println("Logger läuft bereits.")
+		log.Println("Logger läuft bereits.")
 		return
 	}
 
 	configFile := r.URL.Query().Get("config")
 	if configFile == "" {
 		http.Error(w, "Missing config file parameter", http.StatusBadRequest)
-		fmt.Println("Config File Parameter fehlt.")
+		log.Println("Config File Parameter fehlt.")
 		return
 	}
 
 	configPath := filepath.Join(uploadDir, configFile)
 	if _, err := os.Stat(configPath); os.IsNotExist(err) {
 		http.Error(w, "Config file does not exist", http.StatusBadRequest)
-		fmt.Println("Config File existiert nicht.")
+		log.Println("Config File existiert nicht.")
 		return
 	}
 
 	loggerCmd = exec.Command("./logger", "-c", configPath)
 	if err := loggerCmd.Start(); err != nil {
 		http.Error(w, "Failed to start logger", http.StatusInternalServerError)
-		fmt.Println("Starten des Loggers fehlgeschlagen.")
+		log.Println("Starten des Loggers fehlgeschlagen.")
 		loggerCmd = nil
 		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(Response{Message: "Logger started successfully"})
-	fmt.Println("Logger erfolgreich gestartet.")
+	log.Println("Logger erfolgreich gestartet.")
 }
 
 // Logger stoppen
@@ -128,20 +130,20 @@ func stopLogger(w http.ResponseWriter, r *http.Request) {
 
 	if loggerCmd == nil || loggerCmd.Process == nil {
 		http.Error(w, "Logger is not running", http.StatusBadRequest)
-		fmt.Println("Logger läuft nicht.")
+		log.Println("Logger läuft nicht.")
 		return
 	}
 
 	if err := loggerCmd.Process.Kill(); err != nil {
 		http.Error(w, "Failed to stop logger", http.StatusInternalServerError)
-		fmt.Println("Stoppen des Loggers fehlgeschlagen.")
+		log.Println("Stoppen des Loggers fehlgeschlagen.")
 		return
 	}
 
 	loggerCmd = nil
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(Response{Message: "Logger stopped successfully"})
-	fmt.Println("Logger erfolgreich gestoppt.")
+	log.Println("Logger erfolgreich gestoppt.")
 }
 
 // Logs abrufen
@@ -150,13 +152,13 @@ func getLogs(w http.ResponseWriter, r *http.Request) {
 	logs, err := ioutil.ReadFile(logFilePath)
 	if err != nil {
 		http.Error(w, "Failed to read logs", http.StatusInternalServerError)
-		fmt.Println("Lesen der Logs fehlgeschlagen.")
+		log.Println("Lesen der Logs fehlgeschlagen.")
 		return
 	}
 
 	w.Header().Set("Content-Type", "text/plain")
 	w.Write(logs)
-	fmt.Println("Logs erfolgreich ausgelesen.")
+	log.Println("Logs erfolgreich ausgelesen.")
 }
 
 // Bestehende CAN-Zuweisungen abrufen
@@ -169,6 +171,7 @@ func getAssignments(w http.ResponseWriter, r *http.Request) {
 			data = []byte("[]")
 		} else {
 			http.Error(w, "Failed to read assignments", http.StatusInternalServerError)
+			log.Println("Lesen der CAN Zuweisung fehlgeschlagen:", err)
 			return
 		}
 	}
@@ -183,23 +186,26 @@ func saveAssignments(w http.ResponseWriter, r *http.Request) {
 	var assignments []CANAssignment
 	if err := json.NewDecoder(r.Body).Decode(&assignments); err != nil {
 		http.Error(w, "Invalid JSON", http.StatusBadRequest)
+		log.Println("Ungültige JSON Datei.")
 		return
 	}
 
 	data, err := json.MarshalIndent(assignments, "", "  ")
 	if err != nil {
 		http.Error(w, "Failed to serialize assignments", http.StatusInternalServerError)
+		log.Println("Umwandeln der CAN Zuweisungen fehlgeschlagen:", err)
 		return
 	}
 
 	if err := os.WriteFile(assignmentsFile, data, 0644); err != nil {
 		http.Error(w, "Failed to save assignments", http.StatusInternalServerError)
+		log.Println("Speichern der CAN Zuweisungen fehlgeschlagen:", err)
 		return
 	}
 
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(Response{Message: "Assignments saved successfully"})
-	fmt.Println("Zuweisungen erfolgreich gespeichert.")
+	log.Println("CAN Zuweisungen erfolgreich gespeichert.")
 }
 
 // Datei-Upload
@@ -210,14 +216,14 @@ func uploadHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if r.Method != http.MethodPost {
-		fmt.Println("Ungültige Request Methode:", r.Method)
+		log.Println("Ungültige Request Methode:", r.Method)
 		http.Error(w, "Invalid request method", http.StatusMethodNotAllowed)
 		return
 	}
 
 	file, handler, err := r.FormFile("file")
 	if err != nil {
-		fmt.Println("Datei hochladen fehlgeschlagen:", err)
+		log.Println("Datei hochladen fehlgeschlagen:", err)
 		http.Error(w, "Failed to get file from form", http.StatusBadRequest)
 		return
 	}
@@ -226,7 +232,7 @@ func uploadHandler(w http.ResponseWriter, r *http.Request) {
 	filePath := filepath.Join(uploadDir, handler.Filename)
 	saveFile, err := os.Create(filePath)
 	if err != nil {
-		fmt.Println("Datei speichern fehlgeschlagen:", err)
+		log.Println("Datei speichern fehlgeschlagen:", err)
 		http.Error(w, "Failed to save file", http.StatusInternalServerError)
 		return
 	}
@@ -238,7 +244,8 @@ func uploadHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.WriteHeader(http.StatusOK)
-	fmt.Fprintf(w, "File uploaded successfully: %s", handler.Filename)
+	w.Write([]byte("File uploaded successfully:" + handler.Filename))
+	log.Println("Datei erfolgreich hochgeladen:", handler.Filename)
 }
 
 // WebSocket (optional)
@@ -291,10 +298,13 @@ func main() {
 	// Upload-Verzeichnis erstellen
 	if _, err := os.Stat(uploadDir); os.IsNotExist(err) {
 		if err := os.MkdirAll(uploadDir, os.ModePerm); err != nil {
-			panic(fmt.Sprintf("Failed to create upload directory: %v", err))
+			log.Panicf("Failed to create upload directory: %v", err)
 		}
+		log.Println("Upload Verzeichnis erfolgreich erstellt:", uploadDir)
+	} else {
+		log.Println("Upload Verzeichnis existiert bereits:", uploadDir)
 	}
 
-	fmt.Println("Server läuft auf http://localhost:8080")
+	log.Println("Server läuft auf http://localhost:8080")
 	log.Fatal(http.ListenAndServe(":8080", mux))
 }
