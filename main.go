@@ -18,6 +18,7 @@ const (
 	PF_CAN       = AF_CAN
 	CAN_RAW      = 1
 	SIOCGIFINDEX = 0x8933
+	NUM_CAN      = 6 // Anzahl der CAN-Interfaces
 )
 
 type SockaddrCAN struct {
@@ -37,6 +38,7 @@ type CANFrame struct {
 	Length    uint8     `json:"length"`
 	Data      [8]byte   `json:"data"`
 	Timestamp time.Time `json:"timestamp"`
+	SocketID  string    `json:"socket_id"` // Neue Feld für Socket-Identifikation
 }
 
 var upgrader = websocket.Upgrader{
@@ -83,16 +85,16 @@ func broadcastFrame(frame *CANFrame) {
 	}
 }
 
-func main() {
+func startCANReader(socketID string) error {
 	s, err := syscall.Socket(AF_CAN, syscall.SOCK_RAW, CAN_RAW)
 	if err != nil {
-		log.Fatal(err)
+		return fmt.Errorf("Socket Erstellung fehlgeschlagen für %s: %v", socketID, err)
 	}
 	defer syscall.Close(s)
 
-	ifindex, err := getCANInterfaceIndex("vcan0")
+	ifindex, err := getCANInterfaceIndex(socketID)
 	if err != nil {
-		log.Fatal(err)
+		return fmt.Errorf("Interface Index Abruf fehlgeschlagen für %s: %v", socketID, err)
 	}
 
 	addr := &SockaddrCAN{
@@ -102,30 +104,46 @@ func main() {
 
 	ptr, n, err := addr.sockaddr()
 	if err != nil {
-		log.Fatal(err)
+		return fmt.Errorf("Sockaddr Erstellung fehlgeschlagen für %s: %v", socketID, err)
 	}
+
 	r1, r2, errno := syscall.RawSyscall(syscall.SYS_BIND, uintptr(s), uintptr(ptr), uintptr(n))
 	if errno != 0 {
-		log.Fatal(errno)
+		return fmt.Errorf("Bind fehlgeschlagen für %s: %v", socketID, errno)
 	}
 	_ = r1
 	_ = r2
 
 	go func() {
 		for {
-			frame := &CANFrame{}
+			frame := &CANFrame{SocketID: socketID}
 			err := receiveCANFrame(s, frame)
 			if err != nil {
-				log.Printf("Frame-Empfang Fehler: %v", err)
+				log.Printf("Frame-Empfang Fehler auf %s: %v", socketID, err)
 				continue
 			}
-			// Zeitstempel setzen
 			frame.Timestamp = time.Now()
 			broadcastFrame(frame)
-			fmt.Printf("Frame: ID=%X, Len=%d, Data=%X, Time=%v\n",
-				frame.ID, frame.Length, frame.Data, frame.Timestamp)
+			fmt.Printf("[%s] Frame: ID=%X, Len=%d, Data=%X, Time=%v\n",
+				frame.SocketID, frame.ID, frame.Length, frame.Data, frame.Timestamp)
 		}
 	}()
+
+	return nil
+}
+
+func main() {
+	// Starte CAN Reader für jedes Interface
+	canInterfaces := []string{"vcan0", "vcan1", "vcan2", "vcan3", "vcan4", "vcan5"}
+
+	for _, iface := range canInterfaces {
+		err := startCANReader(iface)
+		if err != nil {
+			log.Printf("Fehler beim Starten des CAN Readers für %s: %v", iface, err)
+			continue
+		}
+		log.Printf("CAN Reader gestartet für Interface: %s", iface)
+	}
 
 	http.HandleFunc("/ws", handleWebSocket)
 	http.Handle("/", http.FileServer(http.Dir("./static")))
@@ -170,16 +188,10 @@ func receiveCANFrame(s int, frame *CANFrame) error {
 		return fmt.Errorf("Unerwartete Frame-Größe: %d", n)
 	}
 
-	// Die CAN ID ist in den ersten 4 Bytes in Little Endian
 	frame.ID = binary.LittleEndian.Uint32(frameBytes[0:4])
-
-	// Die Länge ist im 5. Byte
 	frame.Length = frameBytes[4]
-
-	// Nur die tatsächliche Datenlänge kopieren, nicht alle 8 Bytes
 	copy(frame.Data[:frame.Length], frameBytes[8:8+frame.Length])
 
-	// Rest mit 0 füllen
 	for i := frame.Length; i < 8; i++ {
 		frame.Data[i] = 0
 	}
