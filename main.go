@@ -3,9 +3,11 @@ package main
 import (
 	"encoding/binary"
 	"encoding/json"
+	"flag"
 	"fmt"
 	"log"
 	"net/http"
+	"strings"
 	"syscall"
 	"time"
 	"unsafe"
@@ -18,7 +20,6 @@ const (
 	PF_CAN       = AF_CAN
 	CAN_RAW      = 1
 	SIOCGIFINDEX = 0x8933
-	NUM_CAN      = 6 // Anzahl der CAN-Interfaces
 )
 
 type SockaddrCAN struct {
@@ -38,7 +39,7 @@ type CANFrame struct {
 	Length    uint8     `json:"length"`
 	Data      [8]byte   `json:"data"`
 	Timestamp time.Time `json:"timestamp"`
-	SocketID  string    `json:"socket_id"` // Neue Feld für Socket-Identifikation
+	SocketID  string    `json:"socket_id"`
 }
 
 var upgrader = websocket.Upgrader{
@@ -133,9 +134,26 @@ func startCANReader(socketID string) error {
 }
 
 func main() {
-	// Starte CAN Reader für jedes Interface
-	canInterfaces := []string{"vcan0", "vcan1", "vcan2", "vcan3", "vcan4", "vcan5"}
+	// Definiere Kommandozeilenparameter
+	interfaces := flag.String("interfaces", "", "Komma-separierte Liste von CAN-Interfaces (z.B. vcan0,vcan1,vcan2)")
+	port := flag.String("port", "8080", "WebSocket Server Port")
+	flag.Parse()
 
+	if *interfaces == "" {
+		log.Fatal("Bitte geben Sie mindestens ein CAN-Interface an (-interfaces vcan0,vcan1,...)")
+	}
+
+	// Parse die Interface-Liste
+	canInterfaces := strings.Split(*interfaces, ",")
+
+	// Entferne eventuelle Leerzeichen
+	for i, iface := range canInterfaces {
+		canInterfaces[i] = strings.TrimSpace(iface)
+	}
+
+	log.Printf("Starte mit folgenden CAN-Interfaces: %v", canInterfaces)
+
+	// Starte CAN Reader für jedes Interface
 	for _, iface := range canInterfaces {
 		err := startCANReader(iface)
 		if err != nil {
@@ -148,8 +166,9 @@ func main() {
 	http.HandleFunc("/ws", handleWebSocket)
 	http.Handle("/", http.FileServer(http.Dir("./static")))
 
-	log.Println("Server läuft auf http://localhost:8080")
-	log.Fatal(http.ListenAndServe(":8080", nil))
+	serverAddr := fmt.Sprintf(":%s", *port)
+	log.Printf("Server läuft auf http://localhost%s", serverAddr)
+	log.Fatal(http.ListenAndServe(serverAddr, nil))
 }
 
 func getCANInterfaceIndex(ifname string) (int, error) {
