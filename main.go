@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/http"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 	"unsafe"
@@ -42,13 +43,22 @@ type CANFrame struct {
 	SocketID  string    `json:"socket_id"`
 }
 
-var upgrader = websocket.Upgrader{
-	CheckOrigin: func(r *http.Request) bool {
-		return true
-	},
+type CANSocket struct {
+	fd       int
+	socketID string
+	stop     chan struct{}
 }
 
-var clients = make(map[*websocket.Conn]bool)
+var (
+	upgrader = websocket.Upgrader{
+		CheckOrigin: func(r *http.Request) bool {
+			return true
+		},
+	}
+	clients    = make(map[*websocket.Conn]bool)
+	clientsMux sync.RWMutex
+	canSockets []*CANSocket
+)
 
 func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	conn, err := upgrader.Upgrade(w, r, nil)
@@ -58,8 +68,15 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	}
 	defer conn.Close()
 
+	clientsMux.Lock()
 	clients[conn] = true
-	defer delete(clients, conn)
+	clientsMux.Unlock()
+
+	defer func() {
+		clientsMux.Lock()
+		delete(clients, conn)
+		clientsMux.Unlock()
+	}()
 
 	for {
 		_, _, err := conn.ReadMessage()
@@ -76,6 +93,9 @@ func broadcastFrame(frame *CANFrame) {
 		return
 	}
 
+	clientsMux.RLock()
+	defer clientsMux.RUnlock()
+
 	for client := range clients {
 		err := client.WriteMessage(websocket.TextMessage, frameJSON)
 		if err != nil {
@@ -86,16 +106,16 @@ func broadcastFrame(frame *CANFrame) {
 	}
 }
 
-func startCANReader(socketID string) error {
+func startCANReader(socketID string) (*CANSocket, error) {
 	s, err := syscall.Socket(AF_CAN, syscall.SOCK_RAW, CAN_RAW)
 	if err != nil {
-		return fmt.Errorf("Socket Erstellung fehlgeschlagen für %s: %v", socketID, err)
+		return nil, fmt.Errorf("Socket Erstellung fehlgeschlagen für %s: %v", socketID, err)
 	}
-	defer syscall.Close(s)
 
 	ifindex, err := getCANInterfaceIndex(socketID)
 	if err != nil {
-		return fmt.Errorf("Interface Index Abruf fehlgeschlagen für %s: %v", socketID, err)
+		syscall.Close(s)
+		return nil, fmt.Errorf("Interface Index Abruf fehlgeschlagen für %s: %v", socketID, err)
 	}
 
 	addr := &SockaddrCAN{
@@ -105,32 +125,51 @@ func startCANReader(socketID string) error {
 
 	ptr, n, err := addr.sockaddr()
 	if err != nil {
-		return fmt.Errorf("Sockaddr Erstellung fehlgeschlagen für %s: %v", socketID, err)
+		syscall.Close(s)
+		return nil, fmt.Errorf("Sockaddr Erstellung fehlgeschlagen für %s: %v", socketID, err)
 	}
 
-	r1, r2, errno := syscall.RawSyscall(syscall.SYS_BIND, uintptr(s), uintptr(ptr), uintptr(n))
+	_, _, errno := syscall.RawSyscall(syscall.SYS_BIND, uintptr(s), uintptr(ptr), uintptr(n))
 	if errno != 0 {
-		return fmt.Errorf("Bind fehlgeschlagen für %s: %v", socketID, errno)
+		syscall.Close(s)
+		return nil, fmt.Errorf("Bind fehlgeschlagen für %s: %v", socketID, errno)
 	}
-	_ = r1
-	_ = r2
+
+	canSocket := &CANSocket{
+		fd:       s,
+		socketID: socketID,
+		stop:     make(chan struct{}),
+	}
 
 	go func() {
 		for {
-			frame := &CANFrame{SocketID: socketID}
-			err := receiveCANFrame(s, frame)
-			if err != nil {
-				log.Printf("Frame-Empfang Fehler auf %s: %v", socketID, err)
-				continue
+			select {
+			case <-canSocket.stop:
+				return
+			default:
+				frame := &CANFrame{SocketID: socketID}
+				err := receiveCANFrame(s, frame)
+				if err != nil {
+					log.Printf("Frame-Empfang Fehler auf %s: %v", socketID, err)
+					continue
+				}
+				frame.Timestamp = time.Now()
+				broadcastFrame(frame)
+				fmt.Printf("[%s] Frame: ID=%X, Len=%d, Data=%X, Time=%v\n",
+					frame.SocketID, frame.ID, frame.Length, frame.Data, frame.Timestamp)
 			}
-			frame.Timestamp = time.Now()
-			broadcastFrame(frame)
-			fmt.Printf("[%s] Frame: ID=%X, Len=%d, Data=%X, Time=%v\n",
-				frame.SocketID, frame.ID, frame.Length, frame.Data, frame.Timestamp)
 		}
 	}()
 
-	return nil
+	return canSocket, nil
+}
+
+func cleanup() {
+	// Schließe alle CAN Sockets
+	for _, socket := range canSockets {
+		close(socket.stop)
+		syscall.Close(socket.fd)
+	}
 }
 
 func main() {
@@ -144,24 +183,29 @@ func main() {
 	}
 
 	// Parse die Interface-Liste
-	canInterfaces := strings.Split(*interfaces, ",")
+	canInterfaceList := strings.Split(*interfaces, ",")
 
 	// Entferne eventuelle Leerzeichen
-	for i, iface := range canInterfaces {
-		canInterfaces[i] = strings.TrimSpace(iface)
+	for i, iface := range canInterfaceList {
+		canInterfaceList[i] = strings.TrimSpace(iface)
 	}
 
-	log.Printf("Starte mit folgenden CAN-Interfaces: %v", canInterfaces)
+	log.Printf("Starte mit folgenden CAN-Interfaces: %v", canInterfaceList)
 
 	// Starte CAN Reader für jedes Interface
-	for _, iface := range canInterfaces {
-		err := startCANReader(iface)
+	for _, iface := range canInterfaceList {
+		canSocket, err := startCANReader(iface)
 		if err != nil {
 			log.Printf("Fehler beim Starten des CAN Readers für %s: %v", iface, err)
-			continue
+			cleanup()
+			log.Fatal(err)
 		}
+		canSockets = append(canSockets, canSocket)
 		log.Printf("CAN Reader gestartet für Interface: %s", iface)
 	}
+
+	// Cleanup bei Programmende
+	defer cleanup()
 
 	http.HandleFunc("/ws", handleWebSocket)
 	http.Handle("/", http.FileServer(http.Dir("./static")))
