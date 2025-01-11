@@ -106,7 +106,7 @@ func broadcastFrame(frame *CANFrame) {
 	}
 }
 
-func startCANReader(socketID string) (*CANSocket, error) {
+func startCANReader(socketID string, debug bool) (*CANSocket, error) {
 	s, err := syscall.Socket(AF_CAN, syscall.SOCK_RAW, CAN_RAW)
 	if err != nil {
 		return nil, fmt.Errorf("Socket Erstellung fehlgeschlagen für %s: %v", socketID, err)
@@ -155,8 +155,10 @@ func startCANReader(socketID string) (*CANSocket, error) {
 				}
 				frame.Timestamp = time.Now()
 				broadcastFrame(frame)
-				fmt.Printf("[%s] Frame: ID=%X, Len=%d, Data=%X, Time=%v\n",
-					frame.SocketID, frame.ID, frame.Length, frame.Data, frame.Timestamp)
+				if debug{
+					fmt.Printf("[%s] Frame: ID=%X, Len=%d, Data=%X, Time=%v\n",
+						frame.SocketID, frame.ID, frame.Length, frame.Data, frame.Timestamp)
+				}
 			}
 		}
 	}()
@@ -176,6 +178,7 @@ func main() {
 	// Definiere Kommandozeilenparameter
 	interfaces := flag.String("interfaces", "", "Komma-separierte Liste von CAN-Interfaces (z.B. vcan0,vcan1,vcan2)")
 	port := flag.String("port", "8080", "WebSocket Server Port")
+	debug := flag.Bool("debug", False, "Debug Print aktivieren")
 	flag.Parse()
 
 	if *interfaces == "" {
@@ -194,7 +197,7 @@ func main() {
 
 	// Starte CAN Reader für jedes Interface
 	for _, iface := range canInterfaceList {
-		canSocket, err := startCANReader(iface)
+		canSocket, err := startCANReader(iface, *debug)
 		if err != nil {
 			log.Printf("Fehler beim Starten des CAN Readers für %s: %v", iface, err)
 			cleanup()
