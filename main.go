@@ -12,12 +12,14 @@ import (
 	"sync"
 	"time"
 	"github.com/gorilla/websocket"
+	"strconv"
+	"strings"
 )
 
 // Konstante für das Upload-Verzeichnis und die Zuweisungen-Datei
 const (
 	uploadDir       = "/var/www"
-	assignmentsFile = "/var/www/can_assignments.json"
+	assignmentsFile = "/var/www/assignments/can_assignments.json"
 )
 
 // Variablen
@@ -39,9 +41,9 @@ type CANFrame struct {
 }
 
 type CANAssignment struct {
-	CANSocket string `json:"can_socket"`
-	DBCFile   string `json:"dbc_file"`
-	YAMLFile  string `json:"yaml_file"`
+	CANSocket string `json:"CANSocket"`
+	DBCFile   string `json:"DBCFile"`
+	YAMLFile  string `json:"YAMLFile"`
 }
 
 
@@ -50,7 +52,7 @@ func corsMiddleware(next http.Handler) http.Handler {
     return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
         // CORS-Header setzen
         w.Header().Set("Access-Control-Allow-Origin", "*")  // Erlaube Anfragen von http://localhost:3000
-        w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")    // Erlaube GET, POST und OPTIONS
+        w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS, DELETE")    // Erlaube GET, POST und OPTIONS
         w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")  // Erlaube bestimmte Header
         w.Header().Set("Access-Control-Allow-Credentials", "true")  // Erlaube Cookies/Anmeldeinformationen
 
@@ -65,11 +67,11 @@ func corsMiddleware(next http.Handler) http.Handler {
     })
 }
 
-func listConfigFiles(w http.ResponseWriter, r *http.Request) {
+func listFiles(w http.ResponseWriter, r *http.Request) {
     files, err := os.ReadDir("/var/www")
     if err != nil {
-        http.Error(w, "Failed to read config files", http.StatusInternalServerError)
-		log.Println("Lesen des config Verzeichnisses fehlgeschlagen")
+        http.Error(w, "Failed to read files", http.StatusInternalServerError)
+		log.Println("Lesen des Verzeichnisses fehlgeschlagen")
         return
     }
 
@@ -82,7 +84,7 @@ func listConfigFiles(w http.ResponseWriter, r *http.Request) {
 
     w.Header().Set("Content-Type", "application/json")
     json.NewEncoder(w).Encode(fileNames)
-	log.Println("Lesen des config Verzeichnisses erfolgreich.")
+	log.Println("Lesen des Verzeichnisses erfolgreich.")
 }
 
 // Logger starten
@@ -96,21 +98,21 @@ func startLogger(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	configFile := r.URL.Query().Get("config")
-	if configFile == "" {
-		http.Error(w, "Missing config file parameter", http.StatusBadRequest)
-		log.Println("Config File Parameter fehlt.")
+	yamlFile := r.URL.Query().Get("yaml")
+	if yamlFile == "" {
+		http.Error(w, "Missing yaml file parameter", http.StatusBadRequest)
+		log.Println("yaml File Parameter fehlt.")
 		return
 	}
 
-	configPath := filepath.Join(uploadDir, configFile)
-	if _, err := os.Stat(configPath); os.IsNotExist(err) {
-		http.Error(w, "Config file does not exist", http.StatusBadRequest)
-		log.Println("Config File existiert nicht.")
+	yamlPath := filepath.Join(uploadDir, yamlFile)
+	if _, err := os.Stat(yamlPath); os.IsNotExist(err) {
+		http.Error(w, "yaml file does not exist", http.StatusBadRequest)
+		log.Println("yaml File existiert nicht.")
 		return
 	}
 
-	loggerCmd = exec.Command("./logger", "-c", configPath)
+	loggerCmd = exec.Command("./logger", "-c", yamlPath)
 	if err := loggerCmd.Start(); err != nil {
 		http.Error(w, "Failed to start logger", http.StatusInternalServerError)
 		log.Println("Starten des Loggers fehlgeschlagen.")
@@ -161,51 +163,172 @@ func getLogs(w http.ResponseWriter, r *http.Request) {
 	log.Println("Logs erfolgreich ausgelesen.")
 }
 
-// Bestehende CAN-Zuweisungen abrufen
+// Bestehende CAN-Zuweisungen abrufen oder erstellen, wenn sie nicht existiert oder leer ist
 func getAssignments(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 
+	// Versuche, die Zuweisungsdatei zu lesen
 	data, err := os.ReadFile(assignmentsFile)
 	if err != nil {
 		if os.IsNotExist(err) {
-			data = []byte("[]")
+			// Wenn die Datei nicht existiert, erstelle eine neue Datei mit einer Standardzuweisung
+			data = []byte(`[{"CANSocket": "can0", "DBCFile": "", "YAMLFile": ""}]`)
+			log.Println("Zuweisungsdatei existiert nicht. Erstelle Datei mit Standardzuweisung.")
+			// Speichern der leeren Zuweisung in der Datei
+			if err := os.WriteFile(assignmentsFile, data, 0644); err != nil {
+				http.Error(w, "Failed to create assignments file", http.StatusInternalServerError)
+				log.Println("Fehler beim Erstellen der Zuweisungsdatei:", err)
+				return
+			}
 		} else {
+			// Fehler beim Lesen der Datei
 			http.Error(w, "Failed to read assignments", http.StatusInternalServerError)
-			log.Println("Lesen der CAN Zuweisung fehlgeschlagen:", err)
+			log.Println("Lesen der CAN Zuweisungen fehlgeschlagen:", err)
+			return
+		}
+	} else if len(data) == 2 {
+		// Wenn die Datei leer ist, erstelle die Standardzuweisung
+		log.Println("Zuweisungsdatei leer. Erstelle Standardzuweisung.")
+		data = []byte(`[{"CANSocket": "can0", "DBCFile": "", "YAMLFile": ""}]`)
+		if err := os.WriteFile(assignmentsFile, data, 0644); err != nil {
+			http.Error(w, "Failed to write default assignments", http.StatusInternalServerError)
+			log.Println("Fehler beim Schreiben der Standard-Zuweisung:", err)
 			return
 		}
 	}
 
+	// Zuweisungen erfolgreich zurückgeben
 	w.Write(data)
+	log.Println("CAN Zuweisungen erfolgreich zurückgegeben.")
 }
 
 // Neue CAN-Zuweisungen speichern
 func saveAssignments(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
+    w.Header().Set("Content-Type", "application/json")
 
-	var assignments []CANAssignment
-	if err := json.NewDecoder(r.Body).Decode(&assignments); err != nil {
-		http.Error(w, "Invalid JSON", http.StatusBadRequest)
-		log.Println("Ungültige JSON Datei.")
-		return
-	}
+    var newAssignments []CANAssignment
+    if err := json.NewDecoder(r.Body).Decode(&newAssignments); err != nil {
+        http.Error(w, "Invalid JSON", http.StatusBadRequest)
+        log.Println("Ungültige JSON Datei.")
+        return
+    }
 
-	data, err := json.MarshalIndent(assignments, "", "  ")
-	if err != nil {
-		http.Error(w, "Failed to serialize assignments", http.StatusInternalServerError)
-		log.Println("Umwandeln der CAN Zuweisungen fehlgeschlagen:", err)
-		return
-	}
+    // Die Zuweisungen aus der Datei lesen
+    data, err := os.ReadFile(assignmentsFile)
+    if err != nil {
+        http.Error(w, "Failed to read current assignments", http.StatusInternalServerError)
+        log.Println("Lesen der Zuweisungen fehlgeschlagen:", err)
+        return
+    }
 
-	if err := os.WriteFile(assignmentsFile, data, 0644); err != nil {
-		http.Error(w, "Failed to save assignments", http.StatusInternalServerError)
-		log.Println("Speichern der CAN Zuweisungen fehlgeschlagen:", err)
-		return
-	}
+    // Aktuelle Zuweisungen in ein Slice von CANAssignment umwandeln
+    var currentAssignments []CANAssignment
+    if len(data) > 0 {
+        if err := json.Unmarshal(data, &currentAssignments); err != nil {
+            http.Error(w, "Failed to unmarshal current assignments", http.StatusInternalServerError)
+            log.Println("Fehler beim Unmarshal der aktuellen Zuweisungen:", err)
+            return
+        }
+    }
 
-	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(Response{Message: "Assignments saved successfully"})
-	log.Println("CAN Zuweisungen erfolgreich gespeichert.")
+    // Die neuen Zuweisungen überschreiben oder hinzufügen
+    for i, newAssign := range newAssignments {
+        if i < len(currentAssignments) {
+            // Überschreibe vorhandene Zuweisungen
+            currentAssignments[i].CANSocket = newAssign.CANSocket
+            currentAssignments[i].DBCFile = newAssign.DBCFile
+            currentAssignments[i].YAMLFile = newAssign.YAMLFile
+        } else {
+            // Füge neue Zuweisungen hinzu
+            currentAssignments = append(currentAssignments, newAssign)
+        }
+    }
+
+    // Serialisiere die neuen Zuweisungen und speichere sie in der Datei
+    dataToSave, err := json.MarshalIndent(currentAssignments, "", "  ")
+    if err != nil {
+        http.Error(w, "Failed to serialize assignments", http.StatusInternalServerError)
+        log.Println("Fehler beim Serialisieren der Zuweisungen:", err)
+        return
+    }
+
+    if err := os.WriteFile(assignmentsFile, dataToSave, 0644); err != nil {
+        http.Error(w, "Failed to save assignments", http.StatusInternalServerError)
+        log.Println("Fehler beim Speichern der Zuweisungen:", err)
+        return
+    }
+
+    // Erfolgreiche Antwort
+    w.WriteHeader(http.StatusOK)
+    json.NewEncoder(w).Encode(Response{Message: "Assignments saved successfully"})
+    log.Println("CAN Zuweisungen erfolgreich gespeichert.")
+}
+
+func deleteAssignment(w http.ResponseWriter, r *http.Request) {
+    w.Header().Set("Content-Type", "application/json")
+
+    // Extrahiere den Index manuell aus der URL
+    path := r.URL.Path
+    parts := strings.Split(path, "/")
+    if len(parts) < 3 {
+        http.Error(w, "Invalid URL", http.StatusBadRequest)
+        log.Println("Ungültige URL:", path)
+        return
+    }
+
+    index, err := strconv.Atoi(parts[2]) // Nimm den dritten Teil als Index
+    if err != nil {
+        http.Error(w, "Invalid index", http.StatusBadRequest)
+        log.Println("Ungültiger Index:", err)
+        return
+    }
+
+    // Zuweisungen aus der Datei lesen
+    data, err := os.ReadFile(assignmentsFile)
+    if err != nil {
+        http.Error(w, "Failed to read assignments", http.StatusInternalServerError)
+        log.Println("Lesen der Zuweisungen fehlgeschlagen:", err)
+        return
+    }
+
+    // Parse die Zuweisungen
+    var assignments []CANAssignment
+    if len(data) > 0 {
+        if err := json.Unmarshal(data, &assignments); err != nil {
+            http.Error(w, "Failed to unmarshal assignments", http.StatusInternalServerError)
+            log.Println("Fehler beim Unmarshal der Zuweisungen:", err)
+            return
+        }
+    }
+
+    // Prüfe, ob der Index im gültigen Bereich liegt
+    if index < 0 || index >= len(assignments) {
+        http.Error(w, "Index out of range", http.StatusBadRequest)
+        log.Println("Index außerhalb des gültigen Bereichs:", index)
+        return
+    }
+
+    // Entferne die Zuweisung
+    assignments = append(assignments[:index], assignments[index+1:]...)
+
+    // Speichere die aktualisierten Zuweisungen
+    dataToSave, err := json.MarshalIndent(assignments, "", "  ")
+    if err != nil {
+        http.Error(w, "Failed to serialize assignments", http.StatusInternalServerError)
+        log.Println("Fehler beim Serialisieren der Zuweisungen:", err)
+        return
+    }
+
+    if err := os.WriteFile(assignmentsFile, dataToSave, 0644); err != nil {
+        http.Error(w, "Failed to save assignments", http.StatusInternalServerError)
+        log.Println("Fehler beim Speichern der Zuweisungen:", err)
+        return
+    }
+
+    // Erfolgreiche Antwort
+    w.WriteHeader(http.StatusOK)
+    json.NewEncoder(w).Encode(Response{Message: "Assignment deleted successfully"})
+    log.Println("Zuweisung erfolgreich gelöscht.")
 }
 
 // Datei-Upload
@@ -281,8 +404,10 @@ func main() {
 	mux.Handle("/logger/start",corsMiddleware(http.HandlerFunc(startLogger)))
 	mux.Handle("/logger/stop",corsMiddleware(http.HandlerFunc(stopLogger)))
 	mux.Handle("/logger/logs",corsMiddleware(http.HandlerFunc(getLogs)))
-	mux.Handle("/logger/configs",corsMiddleware(http.HandlerFunc(listConfigFiles)))
+	mux.Handle("/logger/files",corsMiddleware(http.HandlerFunc(listFiles)))
+
 	mux.Handle("/upload",corsMiddleware(http.HandlerFunc(uploadHandler)))
+
 	mux.Handle("/assignments", corsMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet {
 			getAssignments(w, r)
@@ -292,6 +417,8 @@ func main() {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		}
 	})))
+	mux.Handle("/assignments/", corsMiddleware(http.HandlerFunc(deleteAssignment)))
+
 
 	mux.HandleFunc("/ws", handleWebSocket)
 
