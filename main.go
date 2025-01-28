@@ -15,12 +15,10 @@ import (
 	"os/exec"
 	"path/filepath"
 	"log"
-	"sync"
 	"time"
 	"unsafe"
 	"github.com/gorilla/websocket"
 	"strconv"
-	"strings"
 )
 
 // constants
