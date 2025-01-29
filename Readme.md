@@ -112,9 +112,9 @@ Wireless Shark is distributed under the terms of the GPL-3.0 license.
 ## Acknowledgments
 Created by TI 5 in WiSe 2024/25
 
-Ahmet Emirhan Göktaş
-Benjamin Klaric
-Jannis Gröger
-Mario Wegman
-Maximilian Hoffmann
-Stasa Lukic
+- Ahmet Emirhan Göktaş
+- Benjamin Klaric
+- Jannis Gröger
+- Mario Wegman
+- Maximilian Hoffmann
+- Stasa Lukic
