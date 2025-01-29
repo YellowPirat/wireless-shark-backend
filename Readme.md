@@ -10,20 +10,22 @@ A Go-based application that bridges CAN bus interfaces to WebSocket clients, ena
 - Debug output option
 - Clean shutdown handling
 
-## Prerequisites
+## Getting Started
+
+### Prerequisites
 
 - Linux operating system
 - Go 1.13 or higher
 - CAN bus interface(s) configured on the system
 
-## Installation
+### Installation
 
-### Precompiled releases
+#### Precompiled releases
 
 There are precompiled releases for amd64 and arm64 under the release page avaiable.
 https://github.com/YellowPirat/wireless-shark-backend/releases
 
-### Build from source
+#### Build from source
 
 1. Clone the repository:
 ```bash
