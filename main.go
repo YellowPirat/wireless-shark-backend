@@ -1,34 +1,34 @@
 package main
 
 import (
-	"encoding/json"
 	"encoding/binary"
+	"encoding/json"
 	"flag"
 	"fmt"
+	"github.com/gorilla/websocket"
 	"io"
 	"io/ioutil"
+	"log"
 	"net/http"
-	"strings"
-	"sync"
-	"syscall"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"log"
+	"strconv"
+	"strings"
+	"sync"
+	"syscall"
 	"time"
 	"unsafe"
-	"github.com/gorilla/websocket"
-	"strconv"
 )
 
 // constants
 const (
 	uploadDir       = "/var/www"
 	assignmentsFile = "/var/www/assignments/can_assignments.json"
-	AF_CAN       = 29     // Address family for CAN
-	PF_CAN       = AF_CAN // Protocol family for CAN
-	CAN_RAW      = 1      // Raw CAN protocol
-	SIOCGIFINDEX = 0x8933 // IOCTL command to get interface index
+	AF_CAN          = 29     // Address family for CAN
+	PF_CAN          = AF_CAN // Protocol family for CAN
+	CAN_RAW         = 1      // Raw CAN protocol
+	SIOCGIFINDEX    = 0x8933 // IOCTL command to get interface index
 )
 
 // variables
@@ -87,39 +87,39 @@ func (sa *SockaddrCAN) sockaddr() (unsafe.Pointer, _Socklen, error) {
 }
 
 func corsMiddleware(next http.Handler) http.Handler {
-    return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-        // setting CORS-header 
-        w.Header().Set("Access-Control-Allow-Origin", "*")  // allow request from every origin
-        w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS, DELETE")    // allow GET, POST and OPTIONS
-        w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")  // allow specific header
-        w.Header().Set("Access-Control-Allow-Credentials", "true")  // allow cookies "login credentials"
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// setting CORS-header
+		w.Header().Set("Access-Control-Allow-Origin", "*")                            // allow request from every origin
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS, DELETE")  // allow GET, POST and OPTIONS
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization") // allow specific header
+		w.Header().Set("Access-Control-Allow-Credentials", "true")                    // allow cookies "login credentials"
 
-        if r.Method == "OPTIONS" {
-            w.WriteHeader(http.StatusOK)
-            return
-        }
+		if r.Method == "OPTIONS" {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
 
-        next.ServeHTTP(w, r)
-    })
+		next.ServeHTTP(w, r)
+	})
 }
 
 func listFiles(w http.ResponseWriter, r *http.Request) {
-    files, err := os.ReadDir("/var/www")
-    if err != nil {
-        http.Error(w, "Failed to read files", http.StatusInternalServerError)
+	files, err := os.ReadDir("/var/www")
+	if err != nil {
+		http.Error(w, "Failed to read files", http.StatusInternalServerError)
 		log.Println("Lesen des Verzeichnisses fehlgeschlagen")
-        return
-    }
+		return
+	}
 
-    var fileNames []string
-    for _, file := range files {
-        if !file.IsDir() {
-            fileNames = append(fileNames, file.Name())
-        }
-    }
+	var fileNames []string
+	for _, file := range files {
+		if !file.IsDir() {
+			fileNames = append(fileNames, file.Name())
+		}
+	}
 
-    w.Header().Set("Content-Type", "application/json")
-    json.NewEncoder(w).Encode(fileNames)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(fileNames)
 	log.Println("Reading directory successfully")
 }
 
@@ -147,7 +147,7 @@ func startLogger(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	loggerCmd = exec.Command("./logger", "-c", yamlPath)
+	loggerCmd = exec.Command("./logger", "--config_file", yamlPath)
 	if err := loggerCmd.Start(); err != nil {
 		http.Error(w, "Failed to start logger", http.StatusInternalServerError)
 		log.Println("Failes to start logger")
@@ -228,130 +228,130 @@ func getAssignments(w http.ResponseWriter, r *http.Request) {
 }
 
 func saveAssignments(w http.ResponseWriter, r *http.Request) {
-    w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Content-Type", "application/json")
 
-    var newAssignments []CANAssignment
-    if err := json.NewDecoder(r.Body).Decode(&newAssignments); err != nil {
-        http.Error(w, "Invalid JSON", http.StatusBadRequest)
-        log.Println("Invalid JSON file.")
-        return
-    }
+	var newAssignments []CANAssignment
+	if err := json.NewDecoder(r.Body).Decode(&newAssignments); err != nil {
+		http.Error(w, "Invalid JSON", http.StatusBadRequest)
+		log.Println("Invalid JSON file.")
+		return
+	}
 
-    // Reading assignments from file
-    data, err := os.ReadFile(assignmentsFile)
-    if err != nil {
-        http.Error(w, "Failed to read current assignments", http.StatusInternalServerError)
-        log.Println("Failed to read current assignments:", err)
-        return
-    }
+	// Reading assignments from file
+	data, err := os.ReadFile(assignmentsFile)
+	if err != nil {
+		http.Error(w, "Failed to read current assignments", http.StatusInternalServerError)
+		log.Println("Failed to read current assignments:", err)
+		return
+	}
 
-    // changing current assignment into slice of CANAssignment
-    var currentAssignments []CANAssignment
-    if len(data) > 0 {
-        if err := json.Unmarshal(data, &currentAssignments); err != nil {
-            http.Error(w, "Failed to unmarshal current assignments", http.StatusInternalServerError)
-            log.Println("Failed to unmarshal current assignments:", err)
-            return
-        }
-    }
+	// changing current assignment into slice of CANAssignment
+	var currentAssignments []CANAssignment
+	if len(data) > 0 {
+		if err := json.Unmarshal(data, &currentAssignments); err != nil {
+			http.Error(w, "Failed to unmarshal current assignments", http.StatusInternalServerError)
+			log.Println("Failed to unmarshal current assignments:", err)
+			return
+		}
+	}
 
-    // add or overwrite current assignment
-    for i, newAssign := range newAssignments {
-        if i < len(currentAssignments) {
-            // overwrite
-            currentAssignments[i].CANSocket = newAssign.CANSocket
-            currentAssignments[i].DBCFile = newAssign.DBCFile
-            currentAssignments[i].YAMLFile = newAssign.YAMLFile
-        } else {
-            // add
-            currentAssignments = append(currentAssignments, newAssign)
-        }
-    }
+	// add or overwrite current assignment
+	for i, newAssign := range newAssignments {
+		if i < len(currentAssignments) {
+			// overwrite
+			currentAssignments[i].CANSocket = newAssign.CANSocket
+			currentAssignments[i].DBCFile = newAssign.DBCFile
+			currentAssignments[i].YAMLFile = newAssign.YAMLFile
+		} else {
+			// add
+			currentAssignments = append(currentAssignments, newAssign)
+		}
+	}
 
 	// serialize current assignment and parsing into JSON
-    dataToSave, err := json.MarshalIndent(currentAssignments, "", "  ")
-    if err != nil {
-        http.Error(w, "Failed to serialize assignments", http.StatusInternalServerError)
-        log.Println("Failed to serialize assignments:", err)
-        return
-    }
+	dataToSave, err := json.MarshalIndent(currentAssignments, "", "  ")
+	if err != nil {
+		http.Error(w, "Failed to serialize assignments", http.StatusInternalServerError)
+		log.Println("Failed to serialize assignments:", err)
+		return
+	}
 
-    if err := os.WriteFile(assignmentsFile, dataToSave, 0644); err != nil {
-        http.Error(w, "Failed to save assignments", http.StatusInternalServerError)
-        log.Println("Failed to save assignments:", err)
-        return
-    }
+	if err := os.WriteFile(assignmentsFile, dataToSave, 0644); err != nil {
+		http.Error(w, "Failed to save assignments", http.StatusInternalServerError)
+		log.Println("Failed to save assignments:", err)
+		return
+	}
 
-    // successful answer
-    w.WriteHeader(http.StatusOK)
-    json.NewEncoder(w).Encode(Response{Message: "Assignments saved successfully"})
-    log.Println("Assignment saved successfully.")
+	// successful answer
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(Response{Message: "Assignments saved successfully"})
+	log.Println("Assignment saved successfully.")
 }
 
 func deleteAssignment(w http.ResponseWriter, r *http.Request) {
-    w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Content-Type", "application/json")
 
-    // extracting index from URL
-    path := r.URL.Path
-    parts := strings.Split(path, "/")
-    if len(parts) < 3 {
-        http.Error(w, "Invalid URL", http.StatusBadRequest)
-        log.Println("Invalid URL:", path)
-        return
-    }
+	// extracting index from URL
+	path := r.URL.Path
+	parts := strings.Split(path, "/")
+	if len(parts) < 3 {
+		http.Error(w, "Invalid URL", http.StatusBadRequest)
+		log.Println("Invalid URL:", path)
+		return
+	}
 
-    index, err := strconv.Atoi(parts[2]) 
-    if err != nil {
-        http.Error(w, "Invalid index", http.StatusBadRequest)
-        log.Println("Invalid Index:", err)
-        return
-    }
+	index, err := strconv.Atoi(parts[2])
+	if err != nil {
+		http.Error(w, "Invalid index", http.StatusBadRequest)
+		log.Println("Invalid Index:", err)
+		return
+	}
 
-    // Read assignment from file
-    data, err := os.ReadFile(assignmentsFile)
-    if err != nil {
-        http.Error(w, "Failed to read assignments", http.StatusInternalServerError)
-        log.Println("Failed to read assignments:", err)
-        return
-    }
+	// Read assignment from file
+	data, err := os.ReadFile(assignmentsFile)
+	if err != nil {
+		http.Error(w, "Failed to read assignments", http.StatusInternalServerError)
+		log.Println("Failed to read assignments:", err)
+		return
+	}
 
-    // parsing assignments
-    var assignments []CANAssignment
-    if len(data) > 0 {
-        if err := json.Unmarshal(data, &assignments); err != nil {
-            http.Error(w, "Failed to unmarshal assignments", http.StatusInternalServerError)
-            log.Println("Failed to unmarshal assignments:", err)
-            return
-        }
-    }
+	// parsing assignments
+	var assignments []CANAssignment
+	if len(data) > 0 {
+		if err := json.Unmarshal(data, &assignments); err != nil {
+			http.Error(w, "Failed to unmarshal assignments", http.StatusInternalServerError)
+			log.Println("Failed to unmarshal assignments:", err)
+			return
+		}
+	}
 
-    if index < 0 || index >= len(assignments) {
-        http.Error(w, "Index out of range", http.StatusBadRequest)
-        log.Println("Index out of range:", index)
-        return
-    }
+	if index < 0 || index >= len(assignments) {
+		http.Error(w, "Index out of range", http.StatusBadRequest)
+		log.Println("Index out of range:", index)
+		return
+	}
 
-    // deleting assignment
-    assignments = append(assignments[:index], assignments[index+1:]...)
+	// deleting assignment
+	assignments = append(assignments[:index], assignments[index+1:]...)
 
-    // save current assignment
-    dataToSave, err := json.MarshalIndent(assignments, "", "  ")
-    if err != nil {
-        http.Error(w, "Failed to serialize assignments", http.StatusInternalServerError)
-        log.Println("Failed to serialize assignments:", err)
-        return
-    }
+	// save current assignment
+	dataToSave, err := json.MarshalIndent(assignments, "", "  ")
+	if err != nil {
+		http.Error(w, "Failed to serialize assignments", http.StatusInternalServerError)
+		log.Println("Failed to serialize assignments:", err)
+		return
+	}
 
-    if err := os.WriteFile(assignmentsFile, dataToSave, 0644); err != nil {
-        http.Error(w, "Failed to save assignments", http.StatusInternalServerError)
-        log.Println("Failed to save assignments:", err)
-        return
-    }
+	if err := os.WriteFile(assignmentsFile, dataToSave, 0644); err != nil {
+		http.Error(w, "Failed to save assignments", http.StatusInternalServerError)
+		log.Println("Failed to save assignments:", err)
+		return
+	}
 
 	// successful answer
-    w.WriteHeader(http.StatusOK)
-    json.NewEncoder(w).Encode(Response{Message: "Assignment deleted successfully"})
-    log.Println("Assignment deleted successfully")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(Response{Message: "Assignment deleted successfully"})
+	log.Println("Assignment deleted successfully")
 }
 
 func uploadHandler(w http.ResponseWriter, r *http.Request) {
@@ -569,8 +569,7 @@ func receiveCANFrame(s int, frame *CANFrame) error {
 	return nil
 }
 
-
-func main () {
+func main() {
 	// Parse command line arguments
 	interfaces := flag.String("interfaces", "", "Comma-separated list of CAN interfaces (e.g., vcan0,vcan1,vcan2)")
 	port := flag.String("port", "8080", "WebSocket server port")
@@ -616,7 +615,6 @@ func main () {
 		log.Println("Upload directory already exists:", uploadDir)
 	}
 
-
 	mux := http.NewServeMux()
 
 	// Logger Endpoints
@@ -642,9 +640,6 @@ func main () {
 
 	// WebSocket Endpoint
 	mux.HandleFunc("/ws", handleWebSocket)
-
-	// Static File Server
-	mux.Handle("/", http.FileServer(http.Dir("./static")))
 
 	serverAddr := fmt.Sprintf(":%s", *port)
 	log.Printf("Server läuft auf http://localhost%s", serverAddr)
